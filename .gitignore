@@ -1,0 +1,12 @@
+node_modules/
+dist/
+releases/
+.devspace-dev/
+.DS_Store
+.env
+*.log
+
+# Maintainer-only instructions and local incident helpers.
+/AGENTS.md
+/LOCAL_PATCHES.md
+/local/
