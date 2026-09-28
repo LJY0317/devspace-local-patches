@@ -930,7 +930,7 @@ test("HTTP request context logs keyed host identity candidates without raw ident
   assert.deepEqual(context.hostIdentityMetadataSignals, ["account"]);
   assert.equal(typeof context.hostIdentityMetadataFingerprint, "string");
   assert.equal(typeof context.oauthClientFingerprint, "string");
-  assert.equal(context.diagnosticSchemaRevision, "2026-09-27-activity-v1");
+  assert.equal(context.diagnosticSchemaRevision, "2026-09-29-workload-v1");
   assert.equal(lines.join("\n").includes(rawAccount), false);
   assert.equal(lines.join("\n").includes("identity-http-session"), false);
 });

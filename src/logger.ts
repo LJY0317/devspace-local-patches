@@ -2,7 +2,7 @@ import type { Request } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, createHmac } from "node:crypto";
 
-export const DIAGNOSTIC_SCHEMA_REVISION = "2026-09-27-activity-v1";
+export const DIAGNOSTIC_SCHEMA_REVISION = "2026-09-29-workload-v1";
 
 const HOST_IDENTITY_SIGNALS = [
   ["account", /(^|[/_.-])account([/_.-]|$)/i],
@@ -33,6 +33,25 @@ export function opaqueFingerprint(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0
     ? createHash("sha256").update(value).digest("hex").slice(0, 24)
     : undefined;
+}
+
+/** Return only the UTF-8 JSON byte size of a value; never return or log its contents. */
+export function diagnosticSerializedBytes(value: unknown): number | undefined {
+  try {
+    const json = JSON.stringify(value);
+    return json === undefined ? undefined : Buffer.byteLength(json, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function diagnosticResultTruncated(value: unknown): boolean | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const structured = record.structuredContent;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) return undefined;
+  const flag = (structured as Record<string, unknown>).output_truncated;
+  return typeof flag === "boolean" ? flag : undefined;
 }
 
 export function privateFingerprint(value: unknown, secret: string): string | undefined {
@@ -79,7 +98,7 @@ export function hostIdentityEvidence(
 
 export async function traceTool<T>(
   id: unknown, tool: string, operation: () => Promise<T>,
-  context?: { signal?: AbortSignal; sessionId?: unknown; meta?: unknown },
+  context?: { signal?: AbortSignal; sessionId?: unknown; meta?: unknown; requestBytes?: number },
 ): Promise<T> {
   const trace = requestTrace.getStore();
   if (!trace) return operation();
@@ -88,12 +107,15 @@ export async function traceTool<T>(
     const startedAt = performance.now();
     let abortObserved = context?.signal?.aborted ?? false;
     let outcome: "completed" | "failed" = "completed";
+    let resultBytes: number | undefined;
+    let resultTruncated: boolean | undefined;
     const meta = context?.meta && typeof context.meta === "object"
       ? context.meta as Record<string, unknown> : undefined;
     if (trace.logging.toolCalls) logEvent(trace.logging, "info", "tool_started", {
       tool,
       conversationScopeFingerprint: opaqueFingerprint(meta?.["openai/session"]),
       mcpSessionFingerprint: opaqueFingerprint(context?.sessionId),
+      requestBytes: context?.requestBytes,
       signalPresent: context?.signal !== undefined,
       signalAbortedAtStart: context?.signal?.aborted ?? false,
     });
@@ -107,7 +129,10 @@ export async function traceTool<T>(
     };
     context?.signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      return await operation();
+      const result = await operation();
+      resultBytes = diagnosticSerializedBytes(result);
+      resultTruncated = diagnosticResultTruncated(result);
+      return result;
     } catch (error) {
       outcome = "failed";
       throw error;
@@ -117,6 +142,8 @@ export async function traceTool<T>(
         tool,
         outcome,
         durationMs: Math.round(performance.now() - startedAt),
+        resultBytes,
+        resultTruncated,
         abortObserved,
         signalAbortedAtSettlement: context?.signal?.aborted ?? false,
       });

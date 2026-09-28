@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  diagnosticSerializedBytes,
   hostIdentityEvidence,
   logEvent,
   opaqueFingerprint,
@@ -32,6 +33,36 @@ test("concurrent tool logs retain HTTP identity without exposing raw RPC IDs", a
   }
   assert.ok(!lines.join("").includes("private-rpc-value"));
   assert.equal(requestTrace.getStore(), undefined);
+});
+
+test("tool workload diagnostics record only request/result byte sizes and truncation state", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "log", (line: string) => lines.push(line));
+  const logging: LoggingConfig = { level: "info", format: "json", requests: true, toolCalls: true, assets: false, shellCommands: false, trustProxy: false };
+  const privateRequest = { path: "private-request-name", query: "private request body" };
+  const privateResult = {
+    content: [{ type: "text", text: "private result body" }],
+    structuredContent: { output_truncated: true, result: "private structured result" },
+  };
+
+  await requestTrace.run({ requestId: "workload", logging }, () => traceTool(
+    "private-workload-rpc",
+    "read",
+    async () => privateResult,
+    { requestBytes: diagnosticSerializedBytes(privateRequest) },
+  ));
+
+  const entries = lines.map((line) => JSON.parse(line));
+  assert.equal(entries[0]?.event, "tool_started");
+  assert.equal(entries[0]?.requestBytes, diagnosticSerializedBytes(privateRequest));
+  assert.equal(entries[1]?.event, "tool_settled");
+  assert.equal(entries[1]?.resultBytes, diagnosticSerializedBytes(privateResult));
+  assert.equal(entries[1]?.resultTruncated, true);
+  const joined = lines.join("\n");
+  assert.equal(joined.includes("private-request-name"), false);
+  assert.equal(joined.includes("private request body"), false);
+  assert.equal(joined.includes("private result body"), false);
+  assert.equal(joined.includes("private structured result"), false);
 });
 
 test("process snapshot logs retain request identity and expose timing without process output", async (t) => {

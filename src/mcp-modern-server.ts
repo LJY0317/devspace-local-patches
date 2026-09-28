@@ -4,7 +4,7 @@ import {
   type ServerOptions,
 } from "@modelcontextprotocol/server";
 import type { McpServer as RegistrationMcpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { traceTool } from "./logger.js";
+import { diagnosticSerializedBytes, traceTool } from "./logger.js";
 import type { Implementation as ServerImplementation } from "@modelcontextprotocol/sdk/types.js";
 
 export type McpRegistrationTarget = Pick<
@@ -45,7 +45,12 @@ export function createModernMcpServerAdapter(
       async (input, context) => traceTool(
         context.mcpReq.id, name,
         async () => handler(input, toolHandlerExtra(context)),
-        { signal: context.mcpReq.signal, sessionId: context.sessionId, meta: context.mcpReq._meta },
+        {
+          signal: context.mcpReq.signal,
+          sessionId: context.sessionId,
+          meta: context.mcpReq._meta,
+          requestBytes: diagnosticSerializedBytes(input),
+        },
       ),
     )) as RegistrationMcpServer["registerTool"],
     registerResource: ((...args: unknown[]) => {
