@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   DIAGNOSTIC_SCHEMA_REVISION,
+  diagnosticToolFailureClass,
   hostIdentityEvidence,
   opaqueFingerprint,
   privateFingerprint,
@@ -964,7 +965,7 @@ export function createServer(
       {
         serverInstanceId,
         operationId,
-        error: error instanceof Error ? error.message : String(error),
+        errorClass: diagnosticToolFailureClass(error),
       },
     ),
   });
@@ -1092,7 +1093,7 @@ export function createServer(
         path,
         status: res.statusCode,
         durationMs: Math.round(performance.now() - startedAt),
-        errorCode: (error as NodeJS.ErrnoException).code ?? "unknown",
+        errorClass: diagnosticToolFailureClass(error),
         requestAborted: req.aborted,
         headersSent: res.headersSent,
         writableEnded: res.writableEnded,
@@ -1211,7 +1212,7 @@ export function createServer(
     } catch (error) {
       logEvent(config.logging, "error", "mcp_request_error", {
         requestId,
-        error: error instanceof Error ? error.message : String(error),
+        errorClass: diagnosticToolFailureClass(error),
       });
       if (!res.headersSent) {
         sendJsonRpcError(res, 500, -32603, "Internal server error");
@@ -1230,7 +1231,7 @@ export function createServer(
           await mcpHandler.close();
         } catch (error) {
           logEvent(config.logging, "warn", "mcp_handler_close_failed", {
-            error: error instanceof Error ? error.message : String(error),
+            errorClass: diagnosticToolFailureClass(error),
           });
         }
         await toolActivities.waitForIdle();

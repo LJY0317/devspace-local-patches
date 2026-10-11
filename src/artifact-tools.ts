@@ -23,7 +23,7 @@ import {
   IncomingArtifactAdapterRegistry,
   type IncomingArtifactAdapter,
 } from "./incoming-artifacts.js";
-import { logEvent } from "./logger.js";
+import { logEvent, opaqueFingerprint } from "./logger.js";
 import type { WorkspaceRegistry } from "./workspaces.js";
 
 const ARTIFACT_WRITE_ANNOTATIONS = {
@@ -268,9 +268,9 @@ export function artifactToolLogFields(
   return {
     fileProvided: input.file !== undefined,
     fileReferenceShape: describeIncomingArtifactValue(input.file),
-    downloadUrlHostname: incomingFileDownloadHostname(input.file),
-    workspaceId: input.workspace_id,
-    path: input.path,
+    downloadUrlPresent: incomingFileDownloadHostname(input.file) !== undefined,
+    workspaceFingerprint: opaqueFingerprint(input.workspace_id),
+    destinationPresent: typeof input.path === "string",
   };
 }
 
@@ -289,9 +289,7 @@ async function executeArtifactTool(
       logEvent(config.logging, "info", "artifact_tool_call", {
         tool: "download_artifact",
         ...artifactToolLogFields(input),
-        path: logResult.path,
         size: logResult.size,
-        sha256: logResult.sha256,
         success: true,
         durationMs: Math.round(performance.now() - startedAt),
       });

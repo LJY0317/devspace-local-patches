@@ -211,18 +211,16 @@ test("compiled registration surface reuses static tool and resource definitions"
   assert.equal(registrationBuilds, 1);
 });
 
-test("modern adapter error logging preserves error and cause identity", () => {
+test("modern adapter errors retain only a bounded failure classification", () => {
   const fields = modernMcpAdapterErrorLogFields(
-    new Error("outer failure", { cause: new TypeError("inner failure") }),
+    new Error("private message and /Users/secret", { cause: new TypeError("private cause") }),
   );
   assert.deepEqual(fields, {
-    error: "outer failure",
-    errorName: "Error",
-    cause: {
-      name: "TypeError",
-      message: "inner failure",
-    },
+    errorClass: "unknown",
+    causeClass: "unknown",
   });
+  assert.equal(JSON.stringify(fields).includes("/Users/"), false);
+  assert.equal(JSON.stringify(fields).includes("private"), false);
 });
 
 function modernRequest(method: string, params: Record<string, unknown>): Request {

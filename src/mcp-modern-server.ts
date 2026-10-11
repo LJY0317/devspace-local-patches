@@ -4,7 +4,7 @@ import {
   type ServerOptions,
 } from "@modelcontextprotocol/server";
 import type { McpServer as RegistrationMcpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { diagnosticSerializedBytes, traceTool } from "./logger.js";
+import { diagnosticSerializedBytes, diagnosticToolFailureClass, traceTool } from "./logger.js";
 import type { Implementation as ServerImplementation } from "@modelcontextprotocol/sdk/types.js";
 
 export type McpRegistrationTarget = Pick<
@@ -101,13 +101,8 @@ export function compileMcpRegistrationSurface(
 export function modernMcpAdapterErrorLogFields(error: Error): Record<string, unknown> {
   const cause = error.cause;
   return {
-    error: error.message,
-    errorName: error.name,
-    ...(cause === undefined ? {} : {
-      cause: cause instanceof Error
-        ? { name: cause.name, message: cause.message }
-        : { name: typeof cause, message: String(cause) },
-    }),
+    errorClass: diagnosticToolFailureClass(error),
+    ...(cause === undefined ? {} : { causeClass: diagnosticToolFailureClass(cause) }),
   };
 }
 

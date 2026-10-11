@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  diagnosticToolFailureClass,
   diagnosticSerializedBytes,
   hostIdentityEvidence,
   logEvent,
@@ -193,8 +194,40 @@ test("failed tools settle with causal request identity and no error contents", a
   const entries = lines.map((line) => JSON.parse(line));
   assert.deepEqual(entries.map((entry) => entry.event), ["tool_started", "tool_settled"]);
   assert.equal(entries[1]?.outcome, "failed");
+  assert.equal(entries[1]?.failureClass, "unknown");
   assert.equal(entries[1]?.requestId, "failed-request");
   assert.ok(!lines.join("").includes("private tool result"));
+});
+
+test("host traces distinguish retained process capacity from tool-returned errors without logging contents", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "log", (line: string) => lines.push(line));
+  const logging: LoggingConfig = { level: "info", format: "json", requests: true,
+    toolCalls: true, assets: false, shellCommands: false, trustProxy: false };
+  await assert.rejects(() => requestTrace.run({ requestId: "capacity-request", logging }, () =>
+    traceTool("raw-private-rpc", "exec_command", async () => {
+      const error = new Error("/Users/private/source may be in message");
+      error.name = "ProcessOperationCapacityError";
+      throw error;
+    })
+  ));
+  await requestTrace.run({ requestId: "reported-error-request", logging }, () =>
+    traceTool("other-raw-rpc", "read", async () => ({
+      isError: true, content: [{ type: "text", text: "private tool content" }],
+    }))
+  );
+  const settled = lines.map(line => JSON.parse(line)).filter(row => row.event === "tool_settled");
+  assert.deepEqual(settled.map(row => row.failureClass), ["process_capacity", "tool_error_result"]);
+  assert.deepEqual(settled.map(row => row.outcome), ["failed", "failed"]);
+  assert.ok(!lines.join("").includes("/Users/private"));
+  assert.ok(!lines.join("").includes("private tool content"));
+  assert.ok(!lines.join("").includes("raw-private-rpc"));
+});
+
+test("tool failure classification cannot execute user-supplied exception getters", () => {
+  assert.equal(diagnosticToolFailureClass(new Proxy({}, {
+    get() { throw Error("private getter"); },
+  })), "unknown");
 });
 
 test("host identity evidence exposes only normalized signals and keyed pseudonyms", () => {

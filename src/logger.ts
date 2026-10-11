@@ -2,7 +2,7 @@ import type { Request } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, createHmac } from "node:crypto";
 
-export const DIAGNOSTIC_SCHEMA_REVISION = "2026-09-29-workload-v1";
+export const DIAGNOSTIC_SCHEMA_REVISION = "2026-10-11-classified-failure-v2";
 
 const HOST_IDENTITY_SIGNALS = [
   ["account", /(^|[/_.-])account([/_.-]|$)/i],
@@ -42,6 +42,36 @@ export function diagnosticSerializedBytes(value: unknown): number | undefined {
     return json === undefined ? undefined : Buffer.byteLength(json, "utf8");
   } catch {
     return undefined;
+  }
+}
+
+/** Closed host-side tool failure classification. No exception prose, stack,
+ * request argument, local path or untrusted code is ever returned to logs. */
+export function diagnosticToolFailureClass(error: unknown):
+  "process_capacity" | "operation_conflict" | "aborted" | "timeout"
+  | "permission_denied" | "transport_failure" | "tool_error_result" | "unknown" {
+  try {
+    if (!error || typeof error !== "object") return "unknown";
+    const candidate = error as { readonly name?: unknown; readonly code?: unknown };
+    if (candidate.name === "ProcessOperationCapacityError") return "process_capacity";
+    if (candidate.name === "ProcessOperationExistsError") return "operation_conflict";
+    if (candidate.name === "AbortError") return "aborted";
+    if (candidate.name === "TimeoutError" || candidate.code === "ETIMEDOUT") return "timeout";
+    if (candidate.code === "EACCES" || candidate.code === "EPERM") return "permission_denied";
+    if (candidate.code === "ECONNRESET" || candidate.code === "ECONNREFUSED"
+      || candidate.code === "EPIPE") return "transport_failure";
+  } catch {
+    // A hostile Error proxy/getter must never alter the primary operation.
+  }
+  return "unknown";
+}
+
+function diagnosticToolErrorResult(value: unknown): boolean {
+  try {
+    return Boolean(value && typeof value === "object"
+      && (value as { readonly isError?: unknown }).isError === true);
+  } catch {
+    return false;
   }
 }
 
@@ -107,6 +137,7 @@ export async function traceTool<T>(
     const startedAt = performance.now();
     let abortObserved = context?.signal?.aborted ?? false;
     let outcome: "completed" | "failed" = "completed";
+    let failureClass: ReturnType<typeof diagnosticToolFailureClass> | undefined;
     let resultBytes: number | undefined;
     let resultTruncated: boolean | undefined;
     const meta = context?.meta && typeof context.meta === "object"
@@ -130,17 +161,23 @@ export async function traceTool<T>(
     context?.signal?.addEventListener("abort", onAbort, { once: true });
     try {
       const result = await operation();
+      if (diagnosticToolErrorResult(result)) {
+        outcome = "failed";
+        failureClass = "tool_error_result";
+      }
       resultBytes = diagnosticSerializedBytes(result);
       resultTruncated = diagnosticResultTruncated(result);
       return result;
     } catch (error) {
       outcome = "failed";
+      failureClass = diagnosticToolFailureClass(error);
       throw error;
     } finally {
       context?.signal?.removeEventListener("abort", onAbort);
       if (trace.logging.toolCalls) logEvent(trace.logging, "info", "tool_settled", {
         tool,
         outcome,
+        ...(failureClass ? { failureClass } : {}),
         durationMs: Math.round(performance.now() - startedAt),
         resultBytes,
         resultTruncated,

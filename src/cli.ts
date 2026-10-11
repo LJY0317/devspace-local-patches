@@ -54,7 +54,7 @@ import {
 import { expandHomePath } from "./roots.js";
 import { readReviewRef } from "./review-checkpoints.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
-import { logEvent } from "./logger.js";
+import { diagnosticToolFailureClass, logEvent, opaqueFingerprint } from "./logger.js";
 import { pruneStaleManagedWorktrees } from "./worktree-prune.js";
 
 type Command =
@@ -345,7 +345,7 @@ async function serve(): Promise<void> {
   };
   const handleShutdown = () => {
     void shutdown().catch((error) => {
-      console.error("devspace shutdown failed", error);
+      console.error("devspace shutdown failed", diagnosticToolFailureClass(error));
       process.exit(1);
     });
   };
@@ -358,8 +358,7 @@ async function runStartupWorktreeCleanup(config: ServerConfig): Promise<void> {
     const cleanup = await pruneStaleManagedWorktrees(config);
     if (cleanup.isErr()) {
       logEvent(config.logging, "warn", "managed_worktree_cleanup_failed", {
-        error: cleanup.error.message,
-        operation: cleanup.error.operation,
+        failureClass: diagnosticToolFailureClass(cleanup.error),
       });
       return;
     }
@@ -377,14 +376,13 @@ async function runStartupWorktreeCleanup(config: ServerConfig): Promise<void> {
     }
     for (const failure of result.failed) {
       logEvent(config.logging, "warn", "managed_worktree_cleanup_failed", {
-        workspaceId: failure.workspaceId,
-        error: failure.error.message,
-        operation: failure.error.operation,
+        workspaceFingerprint: opaqueFingerprint(failure.workspaceId),
+        failureClass: diagnosticToolFailureClass(failure.error),
       });
     }
   } catch (error) {
     logEvent(config.logging, "warn", "managed_worktree_cleanup_failed", {
-      error: error instanceof Error ? error.message : String(error),
+      failureClass: diagnosticToolFailureClass(error),
     });
   }
 }

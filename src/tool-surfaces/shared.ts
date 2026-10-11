@@ -37,9 +37,15 @@ export function workspaceAppDescriptorMeta(config: ServerConfig): ToolWidgetDesc
 export function logToolCall(config: ServerConfig, fields: ToolLogFields): void {
   if (!config.logging.toolCalls) return;
 
-  const { command, ...safeFields } = fields;
+  // Tool failure strings, file paths and working directories can contain
+  // arbitrary model/user data. Preserve only structural presence and result.
+  // Shell command previews remain a separate explicit shellCommands opt-in.
+  const { command, path, workingDirectory, error, ...safeFields } = fields;
   logEvent(config.logging, fields.success ? "info" : "warn", "tool_call", {
     ...safeFields,
+    ...(path === undefined ? {} : { pathPresent: true }),
+    ...(workingDirectory === undefined ? {} : { workingDirectoryPresent: true }),
+    ...(error === undefined ? {} : { failureClass: "tool_error_result" }),
     commandPreview:
       config.logging.shellCommands && command
         ? commandPreview(command)
@@ -136,23 +142,18 @@ export function contentText(content: ToolContent[]): string {
     .join("\n");
 }
 
-function toolErrorPreview(content: ToolContent[]): string | undefined {
-  const text = contentText(content).replace(/\s+/g, " ").trim();
-  if (!text) return undefined;
-  return text.length > 240 ? `${text.slice(0, 237)}...` : text;
-}
-
 export function logFailedToolResponse(
   config: ServerConfig,
   fields: Omit<ToolLogFields, "success" | "durationMs" | "error">,
-  content: ToolContent[],
+  _content: ToolContent[],
   startedAt: number,
 ): void {
   logToolCall(config, {
     ...fields,
     success: false,
     durationMs: Math.round(performance.now() - startedAt),
-    error: toolErrorPreview(content),
+    // Never inspect user-visible tool error text just to produce diagnostics.
+    error: "tool_error_result",
   });
 }
 
