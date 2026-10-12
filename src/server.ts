@@ -953,7 +953,13 @@ export function createServer(
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
   const serverInstanceId = randomUUID();
-  const processOperationStore = createProcessOperationStore(config.stateDir);
+  const processOperationStore = createProcessOperationStore(config.stateDir, {
+    onCapacity: (reason, counts) => logEvent(config.logging, "warn", "process_capacity_rejected", {
+      reason_class: reason === "terminal" ? "terminal_history_full" : "unresolved_registry_full",
+      unresolved_count: counts.unresolvedCount, terminal_count: counts.terminalCount,
+      unresolved_limit: counts.unresolvedLimit, terminal_limit: counts.terminalLimit,
+    }),
+  });
   const processSessions = new ProcessSessionManager({
     serverInstanceId,
     operationStore: processOperationStore,

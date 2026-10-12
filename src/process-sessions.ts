@@ -413,6 +413,27 @@ export class ProcessSessionManager {
     return statusFromRecord(refreshed, liveness, false);
   }
 
+  /** One bounded, store-only inventory. Unlike status(), this never probes an
+   * OS PID or changes saved liveness; a listed PID is not an owner handle. */
+  listProcesses(input: { workspaceId: string; afterSessionId?: number; limit?: number; includeCompleted?: boolean }) {
+    if (!this.operationStore) throw new Error("durable process registry is unavailable");
+    const page = this.operationStore.list({ workspaceId: input.workspaceId,
+      afterSessionId: input.afterSessionId ?? 0, limit: input.limit ?? 25,
+      includeCompleted: input.includeCompleted ?? false });
+    return {
+      observation: "registry" as const,
+      capacity: this.operationStore.capacity(),
+      processes: page.records.map(record => {
+        const session = this.sessionsByOperation.get(record.operationId);
+        const directlyOwned = session?.workspaceId === input.workspaceId && session.running;
+        const liveness = isTerminalOperationState(record.state) ? "not_running" as const
+          : directlyOwned ? "alive" as const : "unknown" as const;
+        return statusFromRecord(record, liveness, Boolean(directlyOwned));
+      }),
+      nextAfterSessionId: page.nextAfterSessionId,
+    };
+  }
+
   async shutdown(): Promise<void> {
     const runningSessions = Array.from(this.sessions.values()).filter((session) => session.running);
     for (const session of runningSessions) {

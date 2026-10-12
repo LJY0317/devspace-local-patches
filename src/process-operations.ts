@@ -7,6 +7,9 @@ export const PROCESS_OPERATION_TERMINAL_RETENTION_HOURS = 24;
 export const PROCESS_OPERATION_TERMINAL_RETENTION_MS =
   PROCESS_OPERATION_TERMINAL_RETENTION_HOURS * 60 * 60 * 1_000;
 export const PROCESS_OPERATION_MAX_RECORDS = 10_000;
+/** Independently bounded 24-hour completion receipts; these must not consume
+ * slots reserved for commands whose liveness is still unproven. */
+export const PROCESS_OPERATION_MAX_TERMINAL_RECORDS = 50_000;
 
 export type ProcessOperationState =
   | "starting"
@@ -61,9 +64,9 @@ export class ProcessOperationExistsError extends Error {
 }
 
 export class ProcessOperationCapacityError extends Error {
-  constructor(readonly maxRecords: number) {
+  constructor(readonly maxRecords: number, readonly kind: "unresolved" | "terminal" = "unresolved") {
     super(
-      `Process operation registry is full at ${maxRecords} protected records. No new process was started; unresolved and unexpired idempotency records were preserved.`,
+      `Process operation ${kind} capacity is full at ${maxRecords} protected records. No new process was started; unresolved and unexpired idempotency records were preserved.`,
     );
     this.name = "ProcessOperationCapacityError";
   }
@@ -72,7 +75,16 @@ export class ProcessOperationCapacityError extends Error {
 export interface ProcessOperationStoreOptions {
   terminalRetentionMs?: number;
   maxRecords?: number;
+  maxTerminalRecords?: number;
   now?: () => Date;
+  onCapacity?: (kind: "unresolved" | "terminal", capacity: ProcessOperationCapacity) => void;
+}
+
+export interface ProcessOperationCapacity {
+  readonly unresolvedCount: number;
+  readonly terminalCount: number;
+  readonly unresolvedLimit: number;
+  readonly terminalLimit: number;
 }
 
 export interface ProcessOperationStore {
@@ -84,6 +96,11 @@ export interface ProcessOperationStore {
     workspaceId: string;
   }): ProcessOperationRecord;
   get(operationId: string): ProcessOperationRecord | undefined;
+  capacity(): ProcessOperationCapacity;
+  list(input: { workspaceId: string; afterSessionId: number; limit: number; includeCompleted: boolean }): {
+    records: ProcessOperationRecord[];
+    nextAfterSessionId: number | null;
+  };
   markRunning(operationId: string, pid: number, processStartIdentity?: string): void;
   markShutdownRequested(operationId: string): void;
   markFinished(operationId: string, exitCode?: number, signal?: string): void;
@@ -103,12 +120,16 @@ export function createProcessOperationStore(
   const terminalRetentionMs =
     options.terminalRetentionMs ?? PROCESS_OPERATION_TERMINAL_RETENTION_MS;
   const maxRecords = options.maxRecords ?? PROCESS_OPERATION_MAX_RECORDS;
+  const maxTerminalRecords = options.maxTerminalRecords ?? PROCESS_OPERATION_MAX_TERMINAL_RECORDS;
   const now = options.now ?? (() => new Date());
   if (!Number.isFinite(terminalRetentionMs) || terminalRetentionMs < 0) {
     throw new Error("Process operation terminal retention must be a non-negative finite duration.");
   }
   if (!Number.isInteger(maxRecords) || maxRecords <= 0) {
     throw new Error("Process operation record limit must be a positive integer.");
+  }
+  if (!Number.isSafeInteger(maxTerminalRecords) || maxTerminalRecords <= 0) {
+    throw new Error("Process operation terminal record limit must be a positive integer.");
   }
 
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -167,20 +188,41 @@ export function createProcessOperationStore(
     const row = getStatement.get(operationId) as ProcessOperationRow | undefined;
     return row ? rowToRecord(row) : undefined;
   };
+  const list = (input: { workspaceId: string; afterSessionId: number; limit: number; includeCompleted: boolean }) => {
+    if (!Number.isSafeInteger(input.afterSessionId) || input.afterSessionId < 0
+      || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 50) {
+      throw new Error("process registry list bounds are invalid");
+    }
+    const sql = `select operation_id, session_id, server_instance_id, request_id, rpc_id,
+      workspace_id, pid, process_start_identity, state, started_at, updated_at,
+      ended_at, exit_code, signal from process_operations
+      where workspace_id = ? and session_id > ?
+      ${input.includeCompleted ? "" : "and state not in ('exited', 'signaled', 'spawn_failed')"}
+      order by session_id limit ?`;
+    const rows = sqlite.prepare(sql).all(input.workspaceId, input.afterSessionId, input.limit + 1) as ProcessOperationRow[];
+    const page = rows.slice(0, input.limit).map(rowToRecord);
+    return {
+      records: page,
+      nextAfterSessionId: rows.length > input.limit ? page.at(-1)!.sessionId : null,
+    };
+  };
 
   const deleteExpiredTerminalStatement = sqlite.prepare(`
     delete from process_operations
     where state in ('exited', 'signaled', 'spawn_failed')
       and coalesce(ended_at, updated_at) < ?
   `);
-  const countStatement = sqlite.prepare("select count(*) as count from process_operations");
+  const countStatement = sqlite.prepare(`select count(*) as total,
+    coalesce(sum(case when state in ('exited', 'signaled', 'spawn_failed') then 1 else 0 end), 0) as terminal
+    from process_operations`);
   const pruneExpiredTerminal = (): void => {
     const cutoff = new Date(now().getTime() - terminalRetentionMs).toISOString();
     deleteExpiredTerminalStatement.run(cutoff);
   };
-  const countRecords = (): number => {
-    const row = countStatement.get() as { count: number };
-    return row.count;
+  const capacity = (): ProcessOperationCapacity => {
+    const row = countStatement.get() as { total: number; terminal: number };
+    return { unresolvedCount: row.total - row.terminal, terminalCount: row.terminal,
+      unresolvedLimit: maxRecords, terminalLimit: maxTerminalRecords };
   };
 
   // Startup cleanup is deliberately terminal-only. Unresolved states remain
@@ -197,7 +239,14 @@ export function createProcessOperationStore(
   }): ProcessOperationRecord => {
     pruneExpiredTerminal();
     if (get(input.operationId)) throw new ProcessOperationExistsError(input.operationId);
-    if (countRecords() >= maxRecords) throw new ProcessOperationCapacityError(maxRecords);
+    const counts = capacity();
+    const deny = (kind: "unresolved" | "terminal", limit: number): never => {
+      try { options.onCapacity?.(kind, counts); }
+      catch { /* A failure-only diagnostic can never authorize execution or change a denial. */ }
+      throw new ProcessOperationCapacityError(limit, kind);
+    };
+    if (counts.unresolvedCount >= maxRecords) deny("unresolved", maxRecords);
+    if (counts.terminalCount >= maxTerminalRecords) deny("terminal", maxTerminalRecords);
 
     const timestamp = now().toISOString();
     try {
@@ -229,6 +278,8 @@ export function createProcessOperationStore(
   return {
     reserve,
     get,
+    capacity,
+    list,
     markRunning(operationId, pid, processStartIdentity) {
       update(operationId, {
         state: "running",

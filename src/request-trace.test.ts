@@ -225,6 +225,8 @@ test("host traces distinguish retained process capacity from tool-returned error
 });
 
 test("tool failure classification cannot execute user-supplied exception getters", () => {
+  assert.equal(diagnosticToolFailureClass(Object.assign(new Error("private details"), { code: "EBADF" })), "bad_file_descriptor");
+  assert.equal(diagnosticToolFailureClass(Object.assign(new Error("private details"), { code: "EMFILE" })), "resource_exhausted");
   assert.equal(diagnosticToolFailureClass(new Proxy({}, {
     get() { throw Error("private getter"); },
   })), "unknown");

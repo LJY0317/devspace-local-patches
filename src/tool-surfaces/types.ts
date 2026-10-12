@@ -8,7 +8,7 @@ export const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
 // Increment when model-visible tool titles, descriptions, or safety-relevant
 // capability wording changes in a way that should be distinguishable in
 // privacy-safe incident logs.
-export const HOST_FACING_TOOL_CONTRACT_REVISION = "2026-09-27-neutral-v1";
+export const HOST_FACING_TOOL_CONTRACT_REVISION = "2026-10-13-process-discovery-v1";
 
 export const toolNames = {
   openWorkspace: "open_workspace",

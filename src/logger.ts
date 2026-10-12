@@ -49,12 +49,16 @@ export function diagnosticSerializedBytes(value: unknown): number | undefined {
  * request argument, local path or untrusted code is ever returned to logs. */
 export function diagnosticToolFailureClass(error: unknown):
   "process_capacity" | "operation_conflict" | "aborted" | "timeout"
-  | "permission_denied" | "transport_failure" | "tool_error_result" | "unknown" {
+  | "permission_denied" | "transport_failure" | "tool_error_result"
+  | "bad_file_descriptor" | "resource_exhausted" | "unknown" {
   try {
     if (!error || typeof error !== "object") return "unknown";
     const candidate = error as { readonly name?: unknown; readonly code?: unknown };
     if (candidate.name === "ProcessOperationCapacityError") return "process_capacity";
     if (candidate.name === "ProcessOperationExistsError") return "operation_conflict";
+    if (candidate.code === "EBADF") return "bad_file_descriptor";
+    if (candidate.code === "EAGAIN" || candidate.code === "EMFILE"
+      || candidate.code === "ENFILE" || candidate.code === "ENOMEM") return "resource_exhausted";
     if (candidate.name === "AbortError") return "aborted";
     if (candidate.name === "TimeoutError" || candidate.code === "ETIMEDOUT") return "timeout";
     if (candidate.code === "EACCES" || candidate.code === "EPERM") return "permission_denied";

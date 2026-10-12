@@ -99,7 +99,7 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
     },
     {
       mode: "codex",
-      expected: ["open_workspace", "read", "read_many", "apply_patch", "exec_command", "write_stdin", "process_status", "show_changes"],
+      expected: ["open_workspace", "read", "read_many", "apply_patch", "exec_command", "write_stdin", "process_status", "list_processes", "show_changes"],
     },
   ];
 
@@ -231,6 +231,15 @@ test("Codex process operations expose explicit retry-safe status without re-runn
   assert.equal(status.io_available, true);
   assert.equal(status.liveness, "alive");
   assert.equal(status.session_id, start.session_id);
+
+  const discovery = structuredContent(await context.client.callTool({
+    name: "list_processes", arguments: { workspace_id: workspaceId, limit: 5 },
+  }));
+  assert.equal(discovery.observation, "registry");
+  assert.equal((discovery.capacity as { unresolved_count: number }).unresolved_count >= 1, true);
+  const page = discovery.processes as Array<{ operation_id: string; state: string }>;
+  assert.equal(page.some(entry => entry.operation_id === operationId), true);
+  assert.equal(discovery.next_after_session_id, null);
 
   const duplicateMarker = join(context.project, "duplicate-operation-ran.txt");
   const duplicate = await context.client.callTool({

@@ -8,6 +8,7 @@ import {
 } from "../process-sessions.js";
 import {
   PROCESS_OPERATION_MAX_RECORDS,
+  PROCESS_OPERATION_MAX_TERMINAL_RECORDS,
   PROCESS_OPERATION_TERMINAL_RETENTION_HOURS,
 } from "../process-operations.js";
 import { pollProcessSession } from "../process-polling.js";
@@ -227,7 +228,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .uuid()
           .optional()
           .describe(
-            `Optional UUID that identifies this execution for deduplication and recovery. While its record is retained, the same ID refers to the existing execution rather than starting another one. Unresolved executions are retained; terminal records remain available for at least ${PROCESS_OPERATION_TERMINAL_RETENTION_HOURS} hours and may be pruned later. The registry holds up to ${PROCESS_OPERATION_MAX_RECORDS} retained records; at capacity, a new operation_id request returns without starting a process. After an uncertain response, query process_status before deciding whether a new execution is needed. Omit operation_id for an intentionally new execution.`,
+            `Optional UUID that identifies this execution for deduplication and recovery. While its record is retained, the same ID refers to the existing execution rather than starting another one. Unresolved executions are retained; terminal records remain available for at least ${PROCESS_OPERATION_TERMINAL_RETENTION_HOURS} hours and may be pruned later. The registry separately bounds unresolved operations at ${PROCESS_OPERATION_MAX_RECORDS} and recent terminal receipts at ${PROCESS_OPERATION_MAX_TERMINAL_RECORDS}; at either capacity, a new operation_id request returns without starting a process. After an uncertain response, use process_status for that operation ID or list_processes to inspect aggregate occupancy before deciding whether a new execution is needed. Omit operation_id for an intentionally new execution.`,
           ),
         yield_time_ms: z
           .number()
@@ -451,6 +452,47 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         },
       );
       return processStatusToolResponse(status);
+    },
+  );
+
+  const { result: _resultField, ...processEntryShape } = processStatusOutputSchema();
+  server.registerTool(
+    "list_processes",
+    {
+      title: "List process reservations",
+      description: "Inspect a bounded page of saved operations in this workspace and service-wide count-only capacity, even after an execution is refused. No commands, outputs, credentials, cross-workspace identities, process signals, execution retries or OS liveness probes. For an exact live observation, use process_status.",
+      inputSchema: {
+        workspace_id: z.string().describe(workspaceIdDescription),
+        after_session_id: z.number().int().min(0).optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+        include_completed: z.boolean().optional(),
+      },
+      outputSchema: resultOutputSchema({
+        observation: z.literal("registry"),
+        capacity: z.object({ unresolved_count: z.number().int(), terminal_count: z.number().int(),
+          unresolved_limit: z.number().int(), terminal_limit: z.number().int() }),
+        processes: z.array(z.object(processEntryShape)),
+        next_after_session_id: z.number().int().nullable(),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ workspace_id, after_session_id, limit, include_completed }) => {
+      const startedAt = performance.now();
+      const page = await runLoggedToolOperation(config, { tool: "list_processes", workspaceId: workspace_id }, startedAt,
+        async () => {
+          await workspaces.getWorkspace(workspace_id);
+          return processSessions.listProcesses({ workspaceId: workspace_id,
+            afterSessionId: after_session_id, limit, includeCompleted: include_completed });
+        });
+      const processes = page.processes.map(status => {
+        const { result: _message, ...safe } = processStatusToolResponse(status).structuredContent;
+        return safe;
+      });
+      const result = `Registry inventory: ${processes.length} workspace records; ${page.capacity.unresolvedCount}/${page.capacity.unresolvedLimit} unresolved, ${page.capacity.terminalCount}/${page.capacity.terminalLimit} recent terminal. This does not prove any saved PID is still alive.`;
+      return { content: [textBlock(result)], structuredContent: { result, observation: page.observation,
+        capacity: { unresolved_count: page.capacity.unresolvedCount, terminal_count: page.capacity.terminalCount,
+          unresolved_limit: page.capacity.unresolvedLimit, terminal_limit: page.capacity.terminalLimit },
+        processes, next_after_session_id: page.nextAfterSessionId } };
     },
   );
 }

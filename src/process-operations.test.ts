@@ -249,6 +249,72 @@ test("record capacity rejects new execution instead of evicting unresolved or un
   assert.equal(operationRowCount(processOperationDatabasePath(stateDir)), 2);
 });
 
+test("completed operations do not consume unresolved execution slots, but remain bounded and replay-safe", async (t) => {
+  const stateDir = await mkdtemp(join(tmpdir(), "devspace-completion-capacity-"));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  let nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+  const denials: Array<{ kind: string; unresolved: number; terminal: number }> = [];
+  const options = { maxRecords: 2, maxTerminalRecords: 3, now: () => new Date(nowMs),
+    onCapacity: (kind: "unresolved" | "terminal", snapshot: { unresolvedCount: number; terminalCount: number }) => {
+      denials.push({ kind, unresolved: snapshot.unresolvedCount, terminal: snapshot.terminalCount });
+    } };
+  const original = createProcessOperationStore(stateDir, options);
+  for (let index = 0; index < 3; index += 1) {
+    const record = original.reserve({
+      operationId: `completed-${index}`, serverInstanceId: "host-A", workspaceId: "workspace-a",
+    });
+    original.markFinished(record.operationId, 0);
+  }
+  assert.deepEqual(original.capacity(), {
+    unresolvedCount: 0, terminalCount: 3, unresolvedLimit: 2, terminalLimit: 3,
+  });
+  assert.throws(() => original.reserve({
+    operationId: "blocked-unexpired-terminal", serverInstanceId: "host-A", workspaceId: "workspace-a",
+  }), (error: unknown) => error instanceof ProcessOperationCapacityError && error.kind === "terminal");
+  assert.deepEqual(denials, [{ kind: "terminal", unresolved: 0, terminal: 3 }]);
+  assert.equal(original.get("completed-0")?.state, "exited");
+  original.close();
+
+  const recovered = createProcessOperationStore(stateDir, options);
+  assert.equal(recovered.get("completed-0")?.state, "exited");
+  assert.throws(() => recovered.reserve({
+    operationId: "completed-0", serverInstanceId: "host-B", workspaceId: "workspace-a",
+  }), ProcessOperationExistsError);
+  nowMs += PROCESS_OPERATION_TERMINAL_RETENTION_MS + 1;
+  const next = recovered.reserve({
+    operationId: "new-after-expiry", serverInstanceId: "host-B", workspaceId: "workspace-a",
+  });
+  assert.equal(next.state, "starting");
+  assert.equal(recovered.capacity().terminalCount, 0);
+  recovered.close();
+});
+
+test("bounded registry discovery isolates workspace identities and does not probe saved PIDs", async (t) => {
+  const stateDir = await mkdtemp(join(tmpdir(), "devspace-process-discovery-"));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const store = createProcessOperationStore(stateDir, { maxRecords: 5 });
+  t.after(() => store.close());
+  const a1 = store.reserve({ operationId: "A-one", serverInstanceId: "owner-A", workspaceId: "A" });
+  const b1 = store.reserve({ operationId: "B-hidden", serverInstanceId: "owner-B", workspaceId: "B" });
+  const a2 = store.reserve({ operationId: "A-two", serverInstanceId: "owner-A", workspaceId: "A" });
+  store.markFinished(a2.operationId, 0);
+  store.markUnknown(b1.operationId);
+  const first = store.list({ workspaceId: "A", afterSessionId: 0, limit: 1, includeCompleted: true });
+  assert.deepEqual(first.records.map(row => row.operationId), [a1.operationId]);
+  assert.equal(first.nextAfterSessionId, a1.sessionId);
+  const second = store.list({ workspaceId: "A", afterSessionId: a1.sessionId,
+    limit: 1, includeCompleted: true });
+  assert.deepEqual(second.records.map(row => row.operationId), [a2.operationId]);
+  assert.equal(second.nextAfterSessionId, null);
+  assert.deepEqual(store.list({ workspaceId: "A", afterSessionId: 0, limit: 5,
+    includeCompleted: false }).records.map(row => row.operationId), [a1.operationId]);
+  assert.equal(JSON.stringify({ first, second }).includes(b1.operationId), false);
+  assert.deepEqual(store.capacity(), { unresolvedCount: 2, terminalCount: 1,
+    unresolvedLimit: 5, terminalLimit: 50_000 });
+  assert.throws(() => store.list({ workspaceId: "A", afterSessionId: 0, limit: 51,
+    includeCompleted: true }), /bounds/);
+});
+
 test("graceful shutdown waits for owned synthetic processes to close", async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), "devspace-process-shutdown-"));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
