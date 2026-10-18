@@ -752,12 +752,6 @@ export function selectAcpPermissionOption(
   provider?: AcpProvider,
 ): { optionId: string } | undefined {
   if (!writeMode) return undefined;
-  // Copilot's native sandbox has a per-command escape hatch enabled by
-  // default. Normal turns already pass --allow-all-tools, so any permission
-  // request that reaches ACP is an attempted escalation (including a
-  // sandbox bypass). Cancel it instead of turning an ACP approval into host
-  // authority. Full access deliberately keeps the provider's unrestricted
-  // behavior.
   if (provider === "copilot" && writeMode !== "full_access") return undefined;
   const selected = writeMode === "read_only"
     ? options.find((option) => option.kind === "reject_once")
