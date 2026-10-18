@@ -28,23 +28,3 @@ download_artifact({
 DevSpace creates missing parent directories and refuses to overwrite an existing
 file. After the download, normal tools can inspect, move, rename, replace, or
 delete it.
-
-## Safety and limits
-
-The `file` input must be the native value supplied by the MCP host. DevSpace does
-not accept pasted download URLs or local source paths. It validates the complete
-file-object shape, trusted OpenAI download hosts, and redirects before streaming.
-Malformed references, unknown fields, absolute paths, traversal, and symlinked
-parents are rejected.
-
-Downloads are streamed under `artifacts.maxFileBytes` and published without
-overwriting an existing destination. The tool is available on Linux, macOS,
-and Windows. Linux uses descriptor-anchored directory operations. macOS uses
-descriptor-relative `*at` filesystem operations so destination traversal never
-falls back to an unpinned path. Windows pins each destination directory with
-native handles that reject reparse points and prevent rename/replacement while
-the transfer is in progress. BSD remains unsupported.
-
-On POSIX filesystems the partial is created with mode `0600`. Windows file
-permissions follow the destination directory's ACL inheritance rather than
-POSIX mode bits.

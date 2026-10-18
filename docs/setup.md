@@ -131,11 +131,6 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 npx @waishnav/devspace serve
 ```
 
-## Approve The Client
-
-When ChatGPT, Claude, or another MCP client connects, DevSpace shows an Owner
-password approval page. Enter the Owner password printed during setup.
-
 The default config files are:
 
 ```text
