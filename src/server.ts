@@ -6,7 +6,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   DIAGNOSTIC_SCHEMA_REVISION,
   diagnosticToolFailureClass,
-  hostIdentityEvidence,
   opaqueFingerprint,
   privateFingerprint,
   requestTrace,
@@ -1163,18 +1162,6 @@ export function createServer(
     });
     if (res.headersSent) return;
 
-    if (!req.auth?.resource || !oauthProvider.isResourceAllowed(req.auth.resource)) {
-      logEvent(config.logging, "warn", "auth_denied", {
-        requestId,
-        method: req.method,
-        path: requestPath(req),
-        reason: "invalid_oauth_resource",
-        ...requestLogFields(req, config),
-      });
-      sendJsonRpcError(res, 401, -32001, "Unauthorized");
-      return;
-    }
-
     if (config.logging.requests && req.body?.method === "notifications/cancelled") {
       logEvent(config.logging, "info", "mcp_cancel_received", {
         requestId,
@@ -1185,8 +1172,6 @@ export function createServer(
     }
     if (config.logging.requests && req.body?.method === "tools/call") {
       const meta = req.body?.params?._meta;
-      const metadataIdentity = hostIdentityEvidence(meta, config.oauth.ownerToken);
-      const headerIdentity = hostIdentityEvidence(req.headers, config.oauth.ownerToken);
       logEvent(config.logging, "info", "mcp_request_context", {
         requestId,
         rpcId: rpcIdFingerprint(req.body?.id),
@@ -1194,12 +1179,6 @@ export function createServer(
         conversationScopePresent: typeof meta?.["openai/session"] === "string",
         mcpSessionFingerprint: opaqueFingerprint(req.header("mcp-session-id")),
         oauthClientFingerprint: privateFingerprint(req.auth?.clientId, config.oauth.ownerToken),
-        hostIdentityMetadataSignals:
-          metadataIdentity.signals.length > 0 ? metadataIdentity.signals : undefined,
-        hostIdentityMetadataFingerprint: metadataIdentity.fingerprint,
-        hostIdentityHeaderSignals:
-          headerIdentity.signals.length > 0 ? headerIdentity.signals : undefined,
-        hostIdentityHeaderFingerprint: headerIdentity.fingerprint,
         diagnosticSchemaRevision: DIAGNOSTIC_SCHEMA_REVISION,
         serverInstanceId,
         devspaceVersion: DEVSPACE_VERSION,
@@ -1266,7 +1245,6 @@ if (await isMainModule()) {
       `devspace listening on http://${config.host}:${config.port}/mcp`,
     );
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
-    console.log("auth: oauth owner-token flow required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);

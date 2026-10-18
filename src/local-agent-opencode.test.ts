@@ -7,7 +7,6 @@ import {
   OpencodeLocalAgentDriver,
   OpencodeRuntime,
   opencodeAgentFor,
-  opencodePermissionFor,
   type OpencodeClientLike,
   type OpencodeFactory,
 } from "./local-agent-opencode.js";
@@ -226,22 +225,9 @@ await timeoutRuntime.close();
 
 assert.equal(opencodeAgentFor("read_only"), "devspace_read_only");
 assert.equal(opencodeAgentFor("full_access"), "devspace_full_access");
-assert.deepEqual(opencodePermissionFor("allowed"), {
-  read: "allow",
-  edit: "allow",
-  glob: "allow",
-  grep: "allow",
-  list: "allow",
-  bash: "allow",
-  task: "deny",
-  external_directory: "deny",
-});
-const readOnlyPermissions = opencodePermissionFor("read_only");
-assert.equal(typeof readOnlyPermissions === "object" ? readOnlyPermissions.bash : undefined, "deny");
 for (const writeMode of ["read_only", "allowed", "full_access"] as const) {
   const config = opencodeAgentConfig(writeMode);
   assert.equal(config.mode, "primary");
-  assert.equal(typeof config.permission === "object" ? config.permission.task : undefined, "deny");
 }
 
 let promptFailureCount = 0;

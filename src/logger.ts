@@ -4,19 +4,6 @@ import { createHash, createHmac } from "node:crypto";
 
 export const DIAGNOSTIC_SCHEMA_REVISION = "2026-10-11-classified-failure-v2";
 
-const HOST_IDENTITY_SIGNALS = [
-  ["account", /(^|[/_.-])account([/_.-]|$)/i],
-  ["user", /(^|[/_.-])user([/_.-]|$)/i],
-  ["organization", /(^|[/_.-])(organization|org)([/_.-]|$)/i],
-  ["tenant", /(^|[/_.-])tenant([/_.-]|$)/i],
-  ["subject", /(^|[/_.-])(subject|sub)([/_.-]|$)/i],
-] as const;
-
-const NON_IDENTITY_KEYS = new Set([
-  "user-agent",
-  "sec-fetch-user",
-]);
-
 export const requestTrace = new AsyncLocalStorage<{
   requestId: string;
   logging: LoggingConfig;
@@ -91,43 +78,6 @@ function diagnosticResultTruncated(value: unknown): boolean | undefined {
 export function privateFingerprint(value: unknown, secret: string): string | undefined {
   if (typeof value !== "string" || value.length === 0 || secret.length === 0) return undefined;
   return createHmac("sha256", secret).update(value).digest("hex").slice(0, 24);
-}
-
-function identitySignalForKey(key: string): string | undefined {
-  if (NON_IDENTITY_KEYS.has(key.toLowerCase())) return undefined;
-  return HOST_IDENTITY_SIGNALS.find(([, pattern]) => pattern.test(key))?.[0];
-}
-
-function stableIdentityValue(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    return value.length > 0 && value.length <= 1_024 ? value : undefined;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value === "boolean") return value ? "true" : "false";
-  return undefined;
-}
-
-export function hostIdentityEvidence(
-  values: unknown,
-  secret: string,
-): { signals: string[]; fingerprint?: string } {
-  if (!values || typeof values !== "object" || Array.isArray(values)) return { signals: [] };
-  const signals = new Set<string>();
-  const fingerprintParts: string[] = [];
-  for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
-    const signal = identitySignalForKey(key);
-    if (!signal) continue;
-    signals.add(signal);
-    const stableValue = stableIdentityValue(value);
-    if (stableValue !== undefined) fingerprintParts.push(`${key}\0${stableValue}`);
-  }
-  const sortedSignals = [...signals].sort();
-  if (fingerprintParts.length === 0) return { signals: sortedSignals };
-  const fingerprint = createHmac("sha256", secret)
-    .update(fingerprintParts.sort().join("\n"))
-    .digest("hex")
-    .slice(0, 24);
-  return { signals: sortedSignals, fingerprint };
 }
 
 export async function traceTool<T>(

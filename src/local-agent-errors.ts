@@ -107,10 +107,6 @@ export class AgentDaemonConfigChangedError extends TaggedError(
   "AgentDaemonConfigChangedError",
 )<AgentDaemonErrorFields & { code: "DAEMON_CONFIG_CHANGED" }>() {}
 
-export class AgentDaemonUnauthorizedError extends TaggedError(
-  "AgentDaemonUnauthorizedError",
-)<AgentDaemonErrorFields & { code: "DAEMON_UNAUTHORIZED" }>() {}
-
 export class AgentDaemonInvalidRequestError extends TaggedError(
   "AgentDaemonInvalidRequestError",
 )<AgentDaemonErrorFields & { code: "DAEMON_INVALID_REQUEST" }>() {}
@@ -129,7 +125,6 @@ export type AgentDaemonError =
   | AgentDaemonTimeoutError
   | AgentDaemonProtocolMismatchError
   | AgentDaemonConfigChangedError
-  | AgentDaemonUnauthorizedError
   | AgentDaemonInvalidRequestError
   | AgentDaemonInvalidResponseError
   | AgentDaemonInternalError;
@@ -185,7 +180,6 @@ export function isAgentDaemonError(error: unknown): error is AgentDaemonError {
     || AgentDaemonTimeoutError.is(error)
     || AgentDaemonProtocolMismatchError.is(error)
     || AgentDaemonConfigChangedError.is(error)
-    || AgentDaemonUnauthorizedError.is(error)
     || AgentDaemonInvalidRequestError.is(error)
     || AgentDaemonInvalidResponseError.is(error)
     || AgentDaemonInternalError.is(error);
@@ -214,7 +208,6 @@ export function toAgentErrorPayload(error: LocalAgentError): AgentErrorPayload {
     AgentDaemonTimeoutError: daemonErrorPayload,
     AgentDaemonProtocolMismatchError: daemonErrorPayload,
     AgentDaemonConfigChangedError: daemonErrorPayload,
-    AgentDaemonUnauthorizedError: daemonErrorPayload,
     AgentDaemonInvalidRequestError: daemonErrorPayload,
     AgentDaemonInvalidResponseError: daemonErrorPayload,
     AgentDaemonInternalError: daemonErrorPayload,
@@ -326,13 +319,6 @@ export function agentErrorFromPayload(payload: {
       return new AgentDaemonConfigChangedError({
         code: payload.code,
         operation: payload.operation ?? "hello",
-        retryable,
-        message: payload.message,
-      });
-    case "DAEMON_UNAUTHORIZED":
-      return new AgentDaemonUnauthorizedError({
-        code: payload.code,
-        operation: payload.operation ?? "request",
         retryable,
         message: payload.message,
       });

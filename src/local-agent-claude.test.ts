@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import {
   ClaudeLocalAgentDriver,
-  claudeAuthoritySettings,
   type ClaudeQueryLike,
   type ClaudeUserMessage,
 } from "./local-agent-claude.js";
@@ -13,7 +12,6 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
   private readonly iterator: AsyncIterator<ClaudeUserMessage>;
   closeCount = 0;
   model?: string;
-  permissionModes: string[] = [];
   flagSettings: Array<Record<string, unknown>> = [];
 
   constructor(prompt: AsyncIterable<ClaudeUserMessage>) {
@@ -39,10 +37,6 @@ class FakeClaudeQuery implements ClaudeQueryLike, AsyncIterator<unknown> {
 
   close(): void {
     this.closeCount += 1;
-  }
-
-  async setPermissionMode(mode: string): Promise<void> {
-    this.permissionModes.push(mode);
   }
 
   async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
@@ -80,7 +74,7 @@ assert.equal(
 assert.equal(
   driver.runtimeKey({ ...context, writeMode: "full_access" }),
   "claude:agt_claude:full_access",
-  "full access uses a query initialized with the explicit dangerous-permission opt-in",
+  "full access uses a separate runtime key",
 );
 
 const runtimeResult = await driver.createRuntime(context);
@@ -121,56 +115,12 @@ assert.equal(first.providerSessionId, "claude_session_1");
 assert.equal(second.finalResponse, "response:second");
 assert.equal(query?.model, "sonnet");
 assert.equal(lastOptions?.resume, undefined);
-assert.equal(lastOptions?.permissionMode, "dontAsk");
-assert.equal(lastOptions?.allowDangerouslySkipPermissions, undefined);
-assert.deepEqual(lastOptions?.allowedTools, ["Read(/**)", "Edit(/**)", "Bash"]);
 assert.equal(lastOptions?.pathToClaudeCodeExecutable, undefined);
-const initialSandbox = lastOptions?.sandbox as Record<string, unknown>;
-assert.equal(initialSandbox.enabled, true);
-assert.equal(initialSandbox.failIfUnavailable, true);
-assert.equal(initialSandbox.autoAllowBashIfSandboxed, true);
-assert.equal(initialSandbox.allowUnsandboxedCommands, false);
-assert.deepEqual((initialSandbox.filesystem as Record<string, unknown>).allowWrite, []);
-assert.deepEqual((initialSandbox.filesystem as Record<string, unknown>).denyWrite, ["/tmp/project"]);
-const allowedSettings = claudeAuthoritySettings("/tmp/project", "allowed");
-const allowedPermissions = allowedSettings.permissions as Record<string, unknown>;
-const allowedSandbox = allowedSettings.sandbox as Record<string, unknown>;
-assert.deepEqual(allowedPermissions.deny, []);
-assert.deepEqual(allowedSandbox.filesystem, {
-  allowWrite: ["/tmp/project"],
-  denyWrite: [],
-});
-const readOnlySettings = claudeAuthoritySettings("/tmp/project", "read_only");
-const readOnlyPermissions = readOnlySettings.permissions as Record<string, unknown>;
-assert.ok((readOnlyPermissions.deny as string[]).includes("Bash"));
-assert.ok((readOnlyPermissions.deny as string[]).includes("Edit"));
-assert.deepEqual(
-  ((readOnlySettings.sandbox as Record<string, unknown>).filesystem as Record<string, unknown>).allowWrite,
-  [],
-);
-const fullSettings = claudeAuthoritySettings("/tmp/project", "full_access");
-assert.deepEqual((fullSettings.sandbox as Record<string, unknown>), {
-  enabled: false,
-  allowUnsandboxedCommands: true,
-});
 assert.deepEqual(sessionIds, ["claude_session_1"]);
-assert.deepEqual(query?.permissionModes, ["dontAsk", "dontAsk", "bypassPermissions"]);
 assert.equal(query?.flagSettings.length, 3);
 assert.equal(query?.flagSettings[0]?.alwaysThinkingEnabled, true);
 assert.equal(query?.flagSettings[0]?.effortLevel, "high");
-assert.equal(
-  (query?.flagSettings[0]?.permissions as Record<string, unknown>).defaultMode,
-  "dontAsk",
-);
 assert.equal(query?.flagSettings[1]?.effortLevel, "low");
-assert.equal(
-  ((query?.flagSettings[1]?.permissions as Record<string, unknown>).deny as string[]).includes("Edit"),
-  false,
-);
-assert.equal(
-  (query?.flagSettings[2]?.permissions as Record<string, unknown>).defaultMode,
-  "bypassPermissions",
-);
 
 await runtime.close();
 await runtime.close();
@@ -212,7 +162,6 @@ const brokenStreamQuery: ClaudeQueryLike = {
     };
   },
   close() {},
-  async setPermissionMode() {},
   async applyFlagSettings() {},
 };
 const brokenStreamRuntimeResult = await new ClaudeLocalAgentDriver(async () => brokenStreamQuery).createRuntime(context);

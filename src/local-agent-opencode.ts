@@ -2,7 +2,6 @@ import { createRequire } from "node:module";
 import { createServer as createNetServer } from "node:net";
 import type {
   OpencodeClient,
-  PermissionConfig,
 } from "@opencode-ai/sdk/v2";
 import {
   AgentProviderExecutionError,
@@ -303,14 +302,10 @@ async function isOpencodePortInUse(port: number): Promise<boolean> {
   });
 }
 
-export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]): {
+export function opencodeAgentConfig(_writeMode: LocalAgentRunInput["writeMode"]): {
   mode: "primary";
-  permission: PermissionConfig;
 } {
-  return {
-    mode: "primary",
-    permission: opencodePermissionFor(writeMode),
-  };
+  return { mode: "primary" };
 }
 
 async function createOpencodeSession(
@@ -330,21 +325,6 @@ export function opencodeAgentFor(writeMode: LocalAgentRunInput["writeMode"]): st
     case "allowed":
     case undefined: return "devspace_allowed";
   }
-}
-
-export function opencodePermissionFor(writeMode: LocalAgentRunInput["writeMode"]): PermissionConfig {
-  const allowed = writeMode !== "read_only";
-  const unrestricted = writeMode === "full_access";
-  return {
-    read: "allow",
-    edit: allowed ? "allow" : "deny",
-    glob: "allow",
-    grep: "allow",
-    list: "allow",
-    bash: allowed ? "allow" : "deny",
-    task: "deny",
-    external_directory: unrestricted ? "allow" : "deny",
-  };
 }
 
 async function assertOpencodeHealthy(client: OpencodeClientLike): Promise<void> {

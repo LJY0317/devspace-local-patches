@@ -16,19 +16,8 @@ import type {
   LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 
-type ClaudePermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
-
-const CLAUDE_WORKSPACE_ALLOWED_TOOLS = [
-  // allowedTools is passed as a session/CLI rule, so `/` is anchored to the query cwd.
-  "Read(/**)",
-  "Edit(/**)",
-  "Bash",
-] as const;
-
-
 export interface ClaudeQueryLike extends AsyncIterable<unknown> {
   close(): void;
-  setPermissionMode(mode: ClaudePermissionMode): Promise<void>;
   applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
   setModel?(model?: string): Promise<void>;
 }
@@ -107,15 +96,12 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
           });
         }
         if (this.providerSessionId) await callbacks?.onSessionId?.(this.providerSessionId);
-        const flagSettings = claudeAuthoritySettings(input.workspaceRoot, input.writeMode);
         if (input.effort) {
-          Object.assign(flagSettings, {
+          await this.query.applyFlagSettings({
             alwaysThinkingEnabled: true,
             effortLevel: input.effort,
           });
         }
-        await this.query.applyFlagSettings(flagSettings);
-        await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
         if (input.model && this.query.setModel) await this.query.setModel(input.model);
         this.inputQueue.push({
           type: "user",
@@ -268,80 +254,14 @@ export function claudeQueryOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, unknown> {
   const executable = env.CLAUDE_COMMAND;
-  const permissionMode = claudePermissionMode(input.writeMode);
-  const authority = claudeAuthorityOptions(input.workspaceRoot, input.writeMode);
   return {
     cwd: input.workspaceRoot,
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { thinking: { type: "adaptive" }, effort: input.effort } : {}),
     ...(context.providerSessionId ? { resume: context.providerSessionId } : {}),
-    permissionMode,
-    // Restricted runtimes stay warm across read_only/allowed turns. Keep the
-    // workspace capabilities static and narrow individual turns with deny rules.
-    ...(input.writeMode === "full_access"
-      ? {}
-      : { allowedTools: [...CLAUDE_WORKSPACE_ALLOWED_TOOLS] }),
-    sandbox: authority.sandbox,
-    settings: authority.settings,
-    ...(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : {}),
     env: claudeCommandEnvironment(env),
     ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
   };
-}
-
-export function claudePermissionMode(
-  writeMode: LocalAgentWriteMode | undefined,
-): ClaudePermissionMode {
-  switch (writeMode) {
-    case "read_only":
-    case "allowed":
-    case undefined:
-      return "dontAsk";
-    case "full_access": return "bypassPermissions";
-  }
-}
-
-export function claudeAuthoritySettings(
-  workspaceRoot: string,
-  writeMode: LocalAgentWriteMode | undefined,
-): Record<string, unknown> {
-  return claudeAuthorityOptions(workspaceRoot, writeMode).settings;
-}
-
-function claudeAuthorityOptions(
-  workspaceRoot: string,
-  writeMode: LocalAgentWriteMode | undefined,
-): { sandbox: Record<string, unknown>; settings: Record<string, unknown> } {
-  if (writeMode === "full_access") {
-    const sandbox = {
-      enabled: false,
-      allowUnsandboxedCommands: true,
-    };
-    return {
-      sandbox,
-      settings: {
-        permissions: { defaultMode: "bypassPermissions" },
-        sandbox,
-      },
-    };
-  }
-
-  const allowed = writeMode !== "read_only";
-  const permissions = {
-    defaultMode: "dontAsk",
-    deny: allowed ? [] : ["Bash", "Edit"],
-  };
-  const sandbox = {
-    enabled: true,
-    failIfUnavailable: true,
-    autoAllowBashIfSandboxed: true,
-    allowUnsandboxedCommands: false,
-    filesystem: {
-      allowWrite: allowed ? [workspaceRoot] : [],
-      denyWrite: allowed ? [] : [workspaceRoot],
-    },
-  };
-  return { sandbox, settings: { permissions, sandbox } };
 }
 
 export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

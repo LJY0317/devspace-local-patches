@@ -99,15 +99,6 @@ export class LocalAgentDaemonLock {
           rmSync(this.paths.lockPath, { force: true });
         }
         if (!isFileExistsError(error)) throw error;
-        const pid = readDaemonPid(this.paths.lockPath);
-        if (pid !== undefined && isProcessAlive(pid)) {
-          throw new LocalAgentDaemonAlreadyRunningError(pid);
-        }
-        if (pid === undefined) {
-          // An undecodable lock may belong to a process that has not finished
-          // publishing its owner record. Refuse to delete it automatically.
-          throw new LocalAgentDaemonAlreadyRunningError();
-        }
         if (!removeStaleLock(this.paths.lockPath)) continue;
       }
     }
@@ -117,12 +108,8 @@ export class LocalAgentDaemonLock {
   release(): void {
     if (!this.acquired) return;
     this.acquired = false;
-    if (readDaemonPid(this.paths.pidPath) === process.pid) {
-      rmSync(this.paths.pidPath, { force: true });
-    }
-    if (readDaemonPid(this.paths.lockPath) === process.pid) {
-      rmSync(this.paths.lockPath, { force: true });
-    }
+    rmSync(this.paths.pidPath, { force: true });
+    rmSync(this.paths.lockPath, { force: true });
   }
 }
 

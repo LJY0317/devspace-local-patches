@@ -1,8 +1,8 @@
-import { timingSafeEqual, randomBytes, randomUUID, createHash } from "node:crypto";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
 import type { Response } from "express";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
-import { AccessDeniedError, InvalidGrantError, InvalidRequestError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import { InvalidGrantError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type {
   OAuthClientInformationFull,
@@ -31,13 +31,6 @@ const CODE_TTL_MS = 5 * 60 * 1000;
 
 function randomToken(): string {
   return randomBytes(32).toString("base64url");
-}
-
-function safeEquals(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.byteLength !== right.byteLength) return false;
-  return timingSafeEqual(left, right);
 }
 
 function htmlEscape(value: string): string {
@@ -99,17 +92,11 @@ function formHtml(params: {
       </dl>
       <form method="post">
 ${hiddenFields}
-        <label for="owner_token">Owner password</label>
-        <input id="owner_token" name="owner_token" type="password" autocomplete="current-password" autofocus required />
-        <button type="submit">Approve DevSpace connection</button>
+        <button type="submit">Continue</button>
       </form>
     </main>
   </body>
 </html>`;
-}
-
-function requestedScopesAllowed(requested: string[], supported: string[]): boolean {
-  return requested.every((scope) => supported.includes(scope));
 }
 
 export class SingleUserOAuthProvider implements OAuthServerProvider {
@@ -137,32 +124,10 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    if (!params.resource || !this.isResourceAllowed(params.resource)) {
-      throw new InvalidRequestError("Invalid or missing OAuth resource");
-    }
-    if (!requestedScopesAllowed(params.scopes ?? [], this.config.scopes)) {
-      throw new InvalidRequestError("Requested scope is not supported");
-    }
-
     if (res.req.method !== "POST") {
       res.status(200).setHeader("Content-Type", "text/html; charset=utf-8");
       res.send(
         formHtml({
-          clientName: client.client_name ?? client.client_id,
-          scopes: params.scopes ?? this.config.scopes,
-          resource: params.resource,
-          fields: authorizationFormFields(client, params),
-        }),
-      );
-      return;
-    }
-
-    const providedToken = String(res.req.body?.owner_token ?? "");
-    if (!safeEquals(providedToken, this.config.ownerToken)) {
-      res.status(401).setHeader("Content-Type", "text/html; charset=utf-8");
-      res.send(
-        formHtml({
-          error: "The Owner password was not accepted.",
           clientName: client.client_name ?? client.client_id,
           scopes: params.scopes ?? this.config.scopes,
           resource: params.resource,
@@ -201,13 +166,6 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     resource?: URL,
   ): Promise<OAuthTokens> {
     const record = this.validCodeRecord(client, authorizationCode);
-    if (redirectUri && redirectUri !== record.params.redirectUri) {
-      throw new InvalidGrantError("redirect_uri does not match the authorization request");
-    }
-    if (resource && (!record.params.resource || !sameResource(resource, record.params.resource))) {
-      throw new InvalidGrantError("Invalid resource");
-    }
-
     this.codes.delete(authorizationCode);
     return this.issueTokens(client.client_id, record.params.scopes ?? this.config.scopes, record.params.resource);
   }
@@ -220,26 +178,15 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
   ): Promise<OAuthTokens> {
     const refreshTokenHash = hashToken(refreshToken);
     const record = this.oauthStore.getRefreshToken(refreshTokenHash);
-    if (!record || record.clientId !== client.client_id || record.expiresAt < Math.floor(Date.now() / 1000)) {
+    if (!record || record.expiresAt < Math.floor(Date.now() / 1000)) {
       throw new InvalidGrantError("Invalid refresh token");
     }
-    const recordedResource = record.resource ? new URL(record.resource) : undefined;
-    if (!recordedResource || !this.isResourceAllowed(recordedResource)) {
-      throw new InvalidGrantError("Invalid resource");
-    }
-    if (resource && !sameResource(resource, recordedResource)) {
-      throw new InvalidGrantError("Invalid resource");
-    }
-
     const requestedScopes = scopes ?? record.scopes;
-    if (!requestedScopes.every((scope) => record.scopes.includes(scope))) {
-      throw new AccessDeniedError("Refresh token cannot grant requested scopes");
-    }
 
     return this.issueTokens(
       client.client_id,
       requestedScopes,
-      resource ?? recordedResource,
+      resource,
       refreshTokenHash,
     );
   }
@@ -281,7 +228,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     authorizationCode: string,
   ): AuthorizationCodeRecord {
     const record = this.codes.get(authorizationCode);
-    if (!record || record.clientId !== client.client_id || record.expiresAtMs < Date.now()) {
+    if (!record || record.expiresAtMs < Date.now()) {
       throw new InvalidGrantError("Invalid authorization code");
     }
     return record;
@@ -350,8 +297,4 @@ function authorizationFormFields(
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
-}
-
-function sameResource(left: URL, right: URL): boolean {
-  return resourceUrlFromServerUrl(left).href === resourceUrlFromServerUrl(right).href;
 }

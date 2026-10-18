@@ -456,8 +456,6 @@ function threadParams(input: LocalAgentRunInput): Record<string, unknown> {
   return {
     ...(input.providerSessionId ? { threadId: input.providerSessionId } : {}),
     cwd: input.workspaceRoot,
-    approvalPolicy: "never",
-    sandbox: sandboxFor(input.writeMode),
     ...(input.model ? { model: input.model } : {}),
   };
 }
@@ -466,29 +464,9 @@ function turnParams(input: LocalAgentRunInput, threadId: string): Record<string,
   return {
     threadId,
     input: [{ type: "text", text: input.prompt }],
-    approvalPolicy: "never",
-    sandboxPolicy: sandboxPolicyFor(input.writeMode),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
   };
-}
-
-export function sandboxFor(writeMode: LocalAgentWriteMode | undefined): string {
-  switch (writeMode) {
-    case "allowed": return "workspace-write";
-    case "full_access": return "danger-full-access";
-    case "read_only":
-    case undefined: return "read-only";
-  }
-}
-
-function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<string, string | boolean> {
-  switch (writeMode) {
-    case "allowed": return { type: "workspaceWrite", networkAccess: true };
-    case "full_access": return { type: "dangerFullAccess" };
-    case "read_only":
-    case undefined: return { type: "readOnly" };
-  }
 }
 
 function parseCompletedTurn(params: unknown, items: unknown[]): {

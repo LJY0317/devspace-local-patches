@@ -275,10 +275,9 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     if (useChatGpt) {
       prompts.note(
         [
-          `Owner password: ${auth.ownerToken}`,
-          "Use this when ChatGPT asks you to approve DevSpace access.",
+          "DevSpace connection is ready.",
         ].join("\n"),
-        "Owner password",
+        "DevSpace connection",
       );
     }
     if (useCodingAgents) {
@@ -331,7 +330,6 @@ async function serve(): Promise<void> {
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because server.allowedHosts contains '*'");
     }
-    console.log("auth: Owner password approval required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });

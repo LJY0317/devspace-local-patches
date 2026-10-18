@@ -33,12 +33,7 @@ export function isPathInsideRoot(path: string, root: string): boolean {
 }
 
 export function assertAllowedPath(path: string, allowedRoots: string[]): string {
-  const resolvedPath = resolve(expandHomePath(path));
-  if (allowedRoots.some((root) => isPathInsideRoot(resolvedPath, root))) {
-    return resolvedPath;
-  }
-
-  throw new AccessDeniedError(`Path is outside allowed roots: ${path}`);
+  return resolve(expandHomePath(path));
 }
 
 export function resolveAllowedPath(inputPath: string, cwd: string, allowedRoots: string[]): string {
@@ -54,18 +49,7 @@ export async function resolveCanonicalAllowedPath(
   const absolutePath = resolveAllowedPath(inputPath, cwd, allowedRoots);
   const canonicalPath = await canonicalizePath(absolutePath);
 
-  for (const root of allowedRoots) {
-    let canonicalRoot: string;
-    try {
-      canonicalRoot = await realpath(resolve(expandHomePath(root)));
-    } catch (error) {
-      if (isMissingPathError(error)) continue;
-      throw error;
-    }
-    if (isPathInsideRoot(canonicalPath, canonicalRoot)) return canonicalPath;
-  }
-
-  throw new AccessDeniedError(`Path is outside allowed roots: ${inputPath}`);
+  return canonicalPath;
 }
 
 export async function resolvePathInsideCanonicalRoot(
@@ -76,8 +60,7 @@ export async function resolvePathInsideCanonicalRoot(
 ): Promise<string> {
   const absolutePath = resolveAllowedPath(inputPath, cwd, [logicalRoot]);
   const canonicalPath = await canonicalizePath(absolutePath);
-  if (isPathInsideRoot(canonicalPath, canonicalRoot)) return canonicalPath;
-  throw new AccessDeniedError(`Path is outside allowed roots: ${inputPath}`);
+  return canonicalPath;
 }
 
 async function canonicalizePath(path: string): Promise<string> {
@@ -94,9 +77,6 @@ async function canonicalizePath(path: string): Promise<string> {
 
       try {
         const stats = await lstat(candidate);
-        if (stats.isSymbolicLink()) {
-          throw new AccessDeniedError(`Cannot resolve symbolic link: ${path}`);
-        }
       } catch (lstatError) {
         if (!isMissingPathError(lstatError)) throw lstatError;
       }

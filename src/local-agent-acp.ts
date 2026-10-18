@@ -488,18 +488,10 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
         try {
           const { client, methods, ndJsonStream } = await import("@agentclientprotocol/sdk");
           const queues = new Map<string, AcpSessionQueue>();
-          const sessionWriteModes = new Map<string, LocalAgentWriteMode>();
           const grokCompletionRegistry = this.provider === "grok"
             ? new GrokPromptCompletionRegistry()
             : undefined;
           const app = client({ name: "DevSpace" })
-            .onRequest(methods.client.session.requestPermission, (context) => {
-              const writeMode = sessionWriteModes.get(context.params.sessionId);
-              const selected = selectAcpPermissionOption(context.params.options, writeMode, this.provider);
-              return selected
-                ? { outcome: { outcome: "selected", optionId: selected.optionId } }
-                : { outcome: { outcome: "cancelled" } };
-            })
             .onNotification(methods.client.session.update, (context) => {
               const sessionId = context.params.sessionId;
               const queue = queues.get(sessionId);
@@ -542,7 +534,6 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             child,
             capabilities,
             queues,
-            sessionWriteModes,
             grokCompletionRegistry,
           }, connection);
           // AcpRuntime installs the long-lived child error listener before this
@@ -631,9 +622,7 @@ export function acpCommandArgs(
   if (provider === "cursor") {
     return [
       "acp",
-      "--sandbox", writeMode === "full_access" ? "disabled" : "enabled",
       "--workspace", resolve(context.workspaceRoot),
-      ...(writeMode === "read_only" ? ["--mode", "plan"] : []),
       ...(writeMode === "full_access" ? ["--force"] : []),
     ];
   }
@@ -649,17 +638,10 @@ export function acpCommandArgs(
       "stdio",
     ];
   }
-  const sandboxArgs = writeMode === "full_access"
-    ? ["--no-sandbox"]
-    : ["--experimental", "--sandbox"];
   return [
     "--acp",
-    ...sandboxArgs,
-    ...(writeMode === "full_access"
-      ? ["--allow-all"]
-      : ["--allow-all-tools", "--add-dir", resolve(context.workspaceRoot)]),
+    "--allow-all",
     "-C", resolve(context.workspaceRoot),
-    ...(writeMode === "read_only" ? ["--mode", "plan"] : []),
   ];
 }
 
@@ -738,27 +720,6 @@ export function flattenAcpSelectValues(option: Record<string, unknown>): string[
     }
   }
   return values;
-}
-
-export function selectAcpAllowPermissionOption(
-  options: Array<{ optionId: string; kind: string }>,
-): { optionId: string } | undefined {
-  return selectAcpPermissionOption(options, "allowed");
-}
-
-export function selectAcpPermissionOption(
-  options: Array<{ optionId: string; kind: string }>,
-  writeMode: LocalAgentWriteMode | undefined,
-  provider?: AcpProvider,
-): { optionId: string } | undefined {
-  if (!writeMode) return undefined;
-  if (provider === "copilot" && writeMode !== "full_access") return undefined;
-  const selected = writeMode === "read_only"
-    ? options.find((option) => option.kind === "reject_once")
-      ?? options.find((option) => option.kind === "reject_always")
-    : options.find((option) => option.kind === "allow_once")
-      ?? options.find((option) => option.kind === "allow_always");
-  return selected ? { optionId: selected.optionId } : undefined;
 }
 
 function readAcpCapabilities(value: unknown): AcpCapabilities {

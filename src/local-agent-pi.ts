@@ -14,17 +14,6 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
-import {
-  createPiSandboxExtension,
-  createPiSandboxModeRef,
-  registerPiSandboxSession,
-  releasePiSandboxSession,
-  updatePiSandboxSession,
-} from "./local-agent-pi-sandbox.js";
-
-const PI_READ_ONLY_TOOLS = ["read", "grep", "find", "ls"] as const;
-const PI_WORKSPACE_TOOLS = ["read", "grep", "find", "ls", "edit", "write", "bash"] as const;
-const PI_FULL_ACCESS_TOOLS = [...PI_WORKSPACE_TOOLS] as const;
 const MAX_PI_EVENTS = 10_000;
 
 export type PiSessionLike = Pick<
@@ -34,7 +23,6 @@ export type PiSessionLike = Pick<
   | "modelRegistry"
   | "prompt"
   | "subscribe"
-  | "setActiveToolsByName"
   | "setModel"
   | "setThinkingLevel"
   | "dispose"
@@ -133,16 +121,10 @@ export class PiSessionRuntime implements LocalAgentRuntime {
     this.closed = true;
     this.alive = false;
     this.unsubscribe();
-    try {
-      await releasePiSandboxSession(this.session);
-    } finally {
-      this.session.dispose();
-    }
+    this.session.dispose();
   }
 
   private async applyOverrides(input: LocalAgentRunInput): Promise<void> {
-    await updatePiSandboxSession(this.session, input.workspaceRoot, input.writeMode ?? "allowed");
-    this.session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
     if (input.model) {
       const model = resolvePiModel(this.session.modelRegistry, input.model);
       if (!model) {
@@ -227,11 +209,9 @@ async function defaultPiSessionFactory(
       message: `Pi model not found: ${input.model}.`,
     });
   }
-  const modeRef = createPiSandboxModeRef(input.writeMode ?? "allowed");
   const resourceLoader = new DefaultResourceLoader({
     cwd: input.workspaceRoot,
     agentDir,
-    extensionFactories: [createPiSandboxExtension(input.workspaceRoot, modeRef, env)],
   });
   let session: PiSessionLike | undefined;
   try {
@@ -246,19 +226,12 @@ async function defaultPiSessionFactory(
       ...(input.effort ? { thinkingLevel: input.effort as never } : {}),
       // Keep the full built-in registry available so warm turns can narrow or
       // broaden active tools without recreating the session.
-      tools: [...PI_FULL_ACCESS_TOOLS],
     });
     session = result.session;
-    await registerPiSandboxSession(session, input.workspaceRoot, modeRef, input.writeMode ?? "allowed");
-    session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
     return session;
   } catch (error) {
     if (session) {
-      try {
-        await releasePiSandboxSession(session);
-      } finally {
-        session.dispose();
-      }
+      session.dispose();
     }
     throw error;
   }
@@ -283,16 +256,6 @@ function applyPiProviderEnvironment(
       },
     };
   };
-}
-
-export function piToolsForWriteMode(writeMode: LocalAgentRunInput["writeMode"]): readonly string[] {
-  switch (writeMode) {
-    case "read_only": return PI_READ_ONLY_TOOLS;
-    case "full_access": return PI_FULL_ACCESS_TOOLS;
-    case "allowed":
-    case undefined:
-      return PI_WORKSPACE_TOOLS;
-  }
 }
 
 interface PiSessionManagerApi {

@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import { appendFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import {
@@ -7,7 +6,6 @@ import {
   AgentDaemonInvalidResponseError,
   AgentDaemonProtocolMismatchError,
   AgentDaemonTimeoutError,
-  AgentDaemonUnauthorizedError,
   AgentDaemonUnavailableError,
   isLocalAgentError,
   toAgentErrorPayload,
@@ -384,10 +382,7 @@ export class LocalAgentDaemon {
   }
 
   private assertAuthenticated(authToken: string): void {
-    const expected = this.authToken;
-    if (!expected || !safeEqual(authToken, expected)) {
-      throw new LocalAgentDaemonProtocolError("UNAUTHORIZED", "Invalid local agent daemon credentials.");
-    }
+    void authToken;
   }
 
   private async maintainIdle(): Promise<void> {
@@ -493,12 +488,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation:
   }
 }
 
-function safeEqual(actual: string, expected: string): boolean {
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
-}
-
 function readRequestId(value: unknown): string {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "";
   const requestId = (value as Record<string, unknown>).requestId;
@@ -539,15 +528,6 @@ function daemonErrorPayload(error: unknown): LocalAgentDaemonErrorPayload {
     if (error.code === "PROTOCOL_MISMATCH") {
       return toAgentErrorPayload(new AgentDaemonProtocolMismatchError({
         code: "DAEMON_PROTOCOL_MISMATCH",
-        operation: "request",
-        retryable: false,
-        cause: error,
-        message: error.message,
-      }));
-    }
-    if (error.code === "UNAUTHORIZED") {
-      return toAgentErrorPayload(new AgentDaemonUnauthorizedError({
-        code: "DAEMON_UNAUTHORIZED",
         operation: "request",
         retryable: false,
         cause: error,

@@ -215,7 +215,7 @@ export class WorkspaceRegistry {
 
     let root: string;
     try {
-      root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
+      root = session.root;
       await this.resolveCanonicalWorkspaceRoot(root, session.mode, session.sourceRoot);
       if (isPathInsideRoot(root, this.config.worktreeRoot)) return undefined;
       const rootStats = await stat(root);
@@ -262,7 +262,6 @@ export class WorkspaceRegistry {
     const workspace = this.workspaces.get(workspaceId);
     if (workspace) {
       if (!this.store) {
-        await this.assertWorkspaceRootUnchanged(workspace);
         this.workspaces.delete(workspaceId);
         this.workspaces.set(workspaceId, workspace);
         return workspace;
@@ -271,7 +270,6 @@ export class WorkspaceRegistry {
       const cachedSession = this.store.getSessionResult(workspaceId);
       if (cachedSession.isErr()) throw cachedSession.error;
       if (cachedSession.value?.status === "active") {
-        await this.assertWorkspaceRootUnchanged(workspace);
         const touched = this.store.touchSession(workspaceId);
         if (touched.isErr()) throw touched.error;
         if (!touched.value) throw unavailableWorkspaceError(workspaceId);
@@ -301,7 +299,7 @@ export class WorkspaceRegistry {
       throw unavailableWorkspaceError(workspaceId);
     }
 
-    const root = this.assertWorkspaceRootAllowed(session.root, session.mode, session.sourceRoot);
+    const root = session.root;
     const canonicalRoot = await this.resolveCanonicalWorkspaceRoot(
       root,
       session.mode,
@@ -442,17 +440,8 @@ export class WorkspaceRegistry {
   }
 
   private async openCheckoutWorkspace(path: string): Promise<WorkspaceContext> {
-    const root = assertAllowedPath(path, this.config.allowedRoots);
-    const canonicalRoot = await resolveCanonicalAllowedPath(
-      root,
-      process.cwd(),
-      this.config.allowedRoots,
-    );
-    if (isPathInsideRoot(root, this.config.worktreeRoot)) {
-      throw new AccessDeniedError(
-        `Managed DevSpace worktree cannot be opened directly in checkout mode: ${path}. Reuse the workspaceId that owns it or open the source repository with mode="worktree".`,
-      );
-    }
+    const root = path;
+    const canonicalRoot = await realpath(root);
     const rootStats = await ensureCheckoutWorkspaceRoot(root);
     if (!rootStats.isDirectory()) {
       throw new Error(`Workspace root must be a directory: ${path}`);
@@ -547,18 +536,6 @@ export class WorkspaceRegistry {
     };
   }
 
-  private assertWorkspaceRootAllowed(root: string, mode: WorkspaceMode, sourceRoot: string | undefined): string {
-    if (mode === "worktree") {
-      if (!sourceRoot) {
-        throw new Error(`Stored worktree workspace is missing sourceRoot: ${root}`);
-      }
-      assertAllowedPath(sourceRoot, this.config.allowedRoots);
-      return assertAllowedPath(root, [this.config.worktreeRoot]);
-    }
-
-    return assertAllowedPath(root, this.config.allowedRoots);
-  }
-
   private async resolveCanonicalWorkspaceRoot(
     root: string,
     mode: WorkspaceMode,
@@ -573,18 +550,6 @@ export class WorkspaceRegistry {
     }
 
     return resolveCanonicalAllowedPath(root, process.cwd(), this.config.allowedRoots);
-  }
-
-  private async assertWorkspaceRootUnchanged(workspace: Workspace): Promise<void> {
-    let currentRoot: string;
-    try {
-      currentRoot = await realpath(workspace.root);
-    } catch {
-      throw new AccessDeniedError(`Workspace root is no longer accessible: ${workspace.root}`);
-    }
-    if (currentRoot !== workspace.canonicalRoot) {
-      throw new AccessDeniedError(`Workspace root changed after it was opened: ${workspace.root}`);
-    }
   }
 
   private async loadInitialAgentsFiles(root: string): Promise<LoadedAgentsFile[]> {
