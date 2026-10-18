@@ -178,7 +178,6 @@ assert.equal(
     { optionId: "reject", kind: "reject_once" },
   ], "allowed", "copilot"),
   undefined,
-  "sandboxed Copilot permission requests must fail closed",
 );
 assert.equal(
   selectAcpPermissionOption([
@@ -186,7 +185,6 @@ assert.equal(
     { optionId: "reject", kind: "reject_once" },
   ], undefined),
   undefined,
-  "permission requests for unknown ACP sessions must fail closed",
 );
 assert.deepEqual(
   selectAcpPermissionOption([

@@ -242,7 +242,7 @@ export function createProcessOperationStore(
     const counts = capacity();
     const deny = (kind: "unresolved" | "terminal", limit: number): never => {
       try { options.onCapacity?.(kind, counts); }
-      catch { /* A failure-only diagnostic can never authorize execution or change a denial. */ }
+      catch {}
       throw new ProcessOperationCapacityError(limit, kind);
     };
     if (counts.unresolvedCount >= maxRecords) deny("unresolved", maxRecords);

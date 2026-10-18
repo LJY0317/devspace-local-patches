@@ -460,7 +460,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     "list_processes",
     {
       title: "List process reservations",
-      description: "Inspect a bounded page of saved operations in this workspace and service-wide count-only capacity, even after an execution is refused. No commands, outputs, credentials, cross-workspace identities, process signals, execution retries or OS liveness probes. For an exact live observation, use process_status.",
+      description: "Inspect a bounded page of saved operations in this workspace and service-wide count-only capacity. No commands, outputs, credentials, cross-workspace identities, process signals or OS liveness probes. For an exact live observation, use process_status.",
       inputSchema: {
         workspace_id: z.string().describe(workspaceIdDescription),
         after_session_id: z.number().int().min(0).optional(),
